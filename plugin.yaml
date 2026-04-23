@@ -1,0 +1,7 @@
+name: tablestore-mem
+version: 1.0.0
+description: "TableStore OTS SDK memory provider with Hermes sync/prefetch integration."
+pip_dependencies:
+  - "tablestore==6.4.5"
+  - "alibabacloud-tablestore20201209"
+  - "alibabacloud-credentials"
