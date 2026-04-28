@@ -476,7 +476,7 @@ class TableStoreMemoryProvider(MemoryProvider):
             {"key": "instance_name", "description": "OTS instance name (optional; auto-created when missing)"},
             {"key": "memory_store_name", "description": "Memory store name", "default": _DEFAULT_MEMORY_STORE},
             {"key": "app_id", "description": "Scope appId", "default": "hermes"},
-            {"key": "tenant_id", "description": "Default tenantId (gateway user_id overrides this)"},
+            {"key": "tenant_id", "description": "Preferred tenantId (falls back to gateway user_id when empty)"},
             {"key": "description", "description": "Store description used when auto-create is enabled"},
             {"key": "enable_rerank", "description": "Enable rerank for prefetch/search by default", "default": "true", "choices": ["true", "false"]},
             {"key": "auto_create_store", "description": "Auto-create memory store if missing", "default": "true", "choices": ["true", "false"]},
@@ -534,7 +534,7 @@ class TableStoreMemoryProvider(MemoryProvider):
         self._session_id = session_id
         self._platform = _clean_str(kwargs.get("platform"), "cli")
         self._app_id = _scope_piece(self._config.get("app_id"), "hermes")
-        self._tenant_id = _scope_piece(kwargs.get("user_id") or self._config.get("tenant_id"))
+        self._tenant_id = _scope_piece(self._config.get("tenant_id") or kwargs.get("user_id"))
         self._agent_id = _scope_piece(kwargs.get("agent_identity"), "hermes")
         self._run_id = _scope_piece(
             kwargs.get("gateway_session_key")

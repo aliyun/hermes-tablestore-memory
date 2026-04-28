@@ -46,6 +46,12 @@ TABLESTORE_MEMORY_SK=your_access_key_secret
 }
 ```
 
+`tenant_id` is configuration-first. If it is set in
+`tablestore_memory.json`, the plugin uses that value as the active
+`tenantId`. Hermes session `user_id` is only used as a fallback when
+`tenant_id` is empty. If both are empty, the provider falls back to
+`__default__`.
+
 If `instance_name` is missing, the plugin automatically creates a VCU instance
 on first initialization, enables `INTERNET`/`VPC`/`CLASSIC` network access on
 that new instance, derives the endpoint as
@@ -77,6 +83,11 @@ If the plugin is available, Hermes will use it for:
   - `tablestore_search`
   - `tablestore_remember`
   - `tablestore_forget`
+
+Scope behavior:
+
+- writes use the current session scope exactly
+- searches use the current `tenantId` with `agentId=*` and `runId=*`
 
 CLI commands are also available when `tablestore-mem` is the active provider:
 

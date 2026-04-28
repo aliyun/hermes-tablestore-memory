@@ -173,7 +173,7 @@ TABLESTORE_MEMORY_SK=your_access_key_secret
 - `instance_name`: 如果未保存，则在首次实例自举后自动创建并持久化
 - `memory_store_name`: `hermes_mem`
 - `app_id`: `hermes`
-- `tenant_id`: 空字符串，之后会由会话上下文或 `__default__` 解析
+- `tenant_id`: 空字符串，之后会由配置优先解析、会话兜底，最终回退到 `__default__`
 - `description`: 空字符串
 - `enable_rerank`: `true`
 - `auto_create_store`: `true`
@@ -193,8 +193,8 @@ appId / tenantId / agentId / runId
   来源：`tablestore_memory.json` 中的 `app_id`
   默认值：`hermes`
 - `tenantId`
-  来源：优先取 Hermes 会话中的 `user_id`
-  回退：`tablestore_memory.json` 中的 `tenant_id`
+  来源：优先取 `tablestore_memory.json` 中的 `tenant_id`
+  回退：Hermes 会话中的 `user_id`
   默认值：`__default__`
 - `agentId`
   来源：Hermes 当前会话身份，当前实现里主要是 `agent_identity`
@@ -214,7 +214,7 @@ appId / tenantId / agentId / runId
 - `.env`：只放 `TABLESTORE_MEMORY_AK` 和 `TABLESTORE_MEMORY_SK`
 - `tablestore_memory.json`：放 endpoint、instance、memory store、scope 默认值、
   rerank、自动建库、timeout、description
-- 会话上下文：覆盖 `tenantId` 的 `user_id`，以及 `agentId`、`runId`
+- 会话上下文：作为 `tenantId` 兜底来源的 `user_id`，以及 `agentId`、`runId`
 
 另外，写入和检索使用不同的 scope 策略：
 

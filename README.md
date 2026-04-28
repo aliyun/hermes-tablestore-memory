@@ -176,7 +176,7 @@ Current built-in defaults:
 - `instance_name`: auto-created after first instance bootstrap if not already saved
 - `memory_store_name`: `hermes_mem`
 - `app_id`: `hermes`
-- `tenant_id`: empty string, then resolved from session or `__default__`
+- `tenant_id`: empty string, then resolved from config, session fallback, or `__default__`
 - `description`: empty string
 - `enable_rerank`: `true`
 - `auto_create_store`: `true`
@@ -196,8 +196,8 @@ Current field resolution:
   Source: `app_id` in `tablestore_memory.json`.
   Default: `hermes`.
 - `tenantId`
-  Source: Hermes session `user_id` first.
-  Fallback: `tenant_id` in `tablestore_memory.json`.
+  Source: `tenant_id` in `tablestore_memory.json` first.
+  Fallback: Hermes session `user_id`.
   Default: `__default__`.
 - `agentId`
   Source: Hermes session identity, currently `agent_identity`.
@@ -218,7 +218,7 @@ Configuration source summary:
 - `.env`: only `TABLESTORE_MEMORY_AK` and `TABLESTORE_MEMORY_SK`
 - `tablestore_memory.json`: endpoint, instance, store, scope defaults, rerank,
   auto-create, timeout, and description
-- session context: `tenantId` override via `user_id`, plus `agentId` and `runId`
+- session context: fallback `tenantId` via `user_id`, plus `agentId` and `runId`
 
 Write scope and search scope are intentionally different:
 
