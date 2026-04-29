@@ -5,10 +5,12 @@ from __future__ import annotations
 import json
 import logging
 import os
+import socket
 import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 from agent.memory_provider import MemoryProvider
 from tools.registry import tool_error
@@ -38,6 +40,10 @@ _DEFAULT_TIMEOUT = 30.0
 _DEFAULT_MEMORY_STORE = "hermes_mem"
 _DEFAULT_REGION = "cn-beijing"
 _DEFAULT_CONTROL_ENDPOINT = f"tablestore.{_DEFAULT_REGION}.aliyuncs.com"
+_BOOTSTRAP_ENDPOINT_READY_TIMEOUT_SECONDS = 180.0
+_BOOTSTRAP_ENDPOINT_CHECK_INTERVAL_SECONDS = 5.0
+_BOOTSTRAP_DATA_PLANE_RETRIES = 20
+_BOOTSTRAP_RETRY_DELAY_SECONDS = 3.0
 
 
 def _is_not_found_error(exc: Exception) -> bool:
@@ -49,6 +55,41 @@ def _is_not_found_error(exc: Exception) -> bool:
         "resource not found",
     )
     return any(marker in text for marker in markers)
+
+
+def _is_transient_endpoint_error(exc: Exception) -> bool:
+    text = str(exc)
+    markers = (
+        "NameResolutionError",
+        "Failed to resolve",
+        "Temporary failure in name resolution",
+        "Max retries exceeded",
+        "ConnectTimeoutError",
+        "Read timed out",
+        "Connection refused",
+        "NewConnectionError",
+    )
+    return any(marker in text for marker in markers)
+
+
+def _wait_for_endpoint_resolution(
+    endpoint: str,
+    *,
+    timeout_seconds: float = _BOOTSTRAP_ENDPOINT_READY_TIMEOUT_SECONDS,
+    interval_seconds: float = _BOOTSTRAP_ENDPOINT_CHECK_INTERVAL_SECONDS,
+) -> None:
+    host = urlparse(endpoint).hostname or ""
+    if not host:
+        return
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        try:
+            socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
+            return
+        except socket.gaierror as exc:
+            if time.monotonic() >= deadline:
+                raise RuntimeError(f"Timed out waiting for TableStore endpoint DNS: {host}") from exc
+            time.sleep(interval_seconds)
 
 
 def _as_bool(value: Any, default: bool = False) -> bool:
@@ -271,7 +312,13 @@ class _TableStoreClient:
 class _TableStoreControlClient:
     """Control-plane helper for creating a TableStore VCU instance."""
 
-    def __init__(self, endpoint: str = _DEFAULT_CONTROL_ENDPOINT) -> None:
+    def __init__(
+        self,
+        endpoint: str = _DEFAULT_CONTROL_ENDPOINT,
+        *,
+        access_key_id: str = "",
+        access_key_secret: str = "",
+    ) -> None:
         client_cls = Tablestore20201209Client
         credential_cls = CredentialClient
         config_cls = open_api_models.Config if open_api_models else None
@@ -282,8 +329,16 @@ class _TableStoreControlClient:
 
             config_cls = open_api_models_local.Config
 
-        credential = credential_cls()
-        config = config_cls(credential=credential)
+        access_key_id = _clean_str(access_key_id)
+        access_key_secret = _clean_str(access_key_secret)
+        if access_key_id and access_key_secret:
+            config = config_cls(
+                access_key_id=access_key_id,
+                access_key_secret=access_key_secret,
+            )
+        else:
+            credential = credential_cls()
+            config = config_cls(credential=credential)
         config.endpoint = endpoint
         self._client = client_cls(config)
 
@@ -518,7 +573,11 @@ class TableStoreMemoryProvider(MemoryProvider):
 
     def _bootstrap_instance(self) -> Dict[str, str]:
         try:
-            control_client = _TableStoreControlClient()
+            cfg = self._config or _load_config()
+            control_client = _TableStoreControlClient(
+                access_key_id=cfg.get("access_key_id", ""),
+                access_key_secret=cfg.get("access_key_secret", ""),
+            )
             response = control_client.create_vcu_instance()
         except Exception as exc:
             message = getattr(exc, "message", str(exc))
@@ -570,12 +629,14 @@ class TableStoreMemoryProvider(MemoryProvider):
 
     def initialize(self, session_id: str, **kwargs) -> None:
         self._config = _load_config()
+        bootstrapped = False
         if not self._config.get("instance_name"):
             from hermes_constants import get_hermes_home
 
             bootstrap_config = self._bootstrap_instance()
             self.save_config(bootstrap_config, str(get_hermes_home()))
             self._config = _load_config()
+            bootstrapped = True
         self._session_id = session_id
         self._platform = _clean_str(kwargs.get("platform"), "cli")
         self._app_id = _scope_piece(self._config.get("app_id"), "hermes")
@@ -589,6 +650,8 @@ class TableStoreMemoryProvider(MemoryProvider):
         )
         self._memory_store_name = self._config.get("memory_store_name", "")
         self._enable_rerank = _as_bool(self._config.get("enable_rerank"), True)
+        if bootstrapped:
+            _wait_for_endpoint_resolution(self._config.get("endpoint", _DEFAULT_ENDPOINT))
 
         self._client = _TableStoreClient(
             endpoint=self._config.get("endpoint", _DEFAULT_ENDPOINT),
@@ -598,16 +661,7 @@ class TableStoreMemoryProvider(MemoryProvider):
             timeout=float(self._config.get("timeout", _DEFAULT_TIMEOUT)),
         )
 
-        try:
-            self._client.get_memory_store(self._memory_store_name)
-        except Exception as exc:
-            if self._config.get("auto_create_store", True) and _is_not_found_error(exc):
-                self._client.create_memory_store(
-                    self._memory_store_name,
-                    self._config.get("description", ""),
-                )
-            else:
-                raise
+        self._ensure_memory_store_ready(bootstrapped=bootstrapped)
 
     def system_prompt_block(self) -> str:
         return (
@@ -671,6 +725,39 @@ class TableStoreMemoryProvider(MemoryProvider):
             result["ok"] = False
 
         return result
+
+    def _ensure_memory_store_ready(self, *, bootstrapped: bool) -> None:
+        attempts = _BOOTSTRAP_DATA_PLANE_RETRIES if bootstrapped else 1
+        last_exc: Optional[Exception] = None
+        for attempt in range(attempts):
+            try:
+                self._client.get_memory_store(self._memory_store_name)
+                return
+            except Exception as exc:
+                last_exc = exc
+                if self._config.get("auto_create_store", True) and _is_not_found_error(exc):
+                    try:
+                        self._client.create_memory_store(
+                            self._memory_store_name,
+                            self._config.get("description", ""),
+                        )
+                        return
+                    except Exception as create_exc:
+                        last_exc = create_exc
+                        if (
+                            bootstrapped
+                            and attempt < attempts - 1
+                            and _is_transient_endpoint_error(create_exc)
+                        ):
+                            time.sleep(_BOOTSTRAP_RETRY_DELAY_SECONDS)
+                            continue
+                        raise
+                if bootstrapped and attempt < attempts - 1 and _is_transient_endpoint_error(exc):
+                    time.sleep(_BOOTSTRAP_RETRY_DELAY_SECONDS)
+                    continue
+                raise
+        if last_exc is not None:
+            raise last_exc
 
     def prefetch(self, query: str, *, session_id: str = "") -> str:
         if self._prefetch_thread and self._prefetch_thread.is_alive():

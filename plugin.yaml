@@ -1,5 +1,5 @@
 name: tablestore-mem
-version: 1.0.1
+version: 1.0.2
 description: "TableStore OTS SDK memory provider with Hermes sync/prefetch integration."
 pip_dependencies:
   - "tablestore==6.4.5"

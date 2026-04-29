@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## 1.0.2 - 2026-04-29
+
+- Fixed clean-environment automatic bootstrap:
+  - control-plane instance creation now explicitly reuses
+    `TABLESTORE_MEMORY_AK` and `TABLESTORE_MEMORY_SK`
+  - first-run initialization now waits for the new public endpoint DNS to
+    become resolvable before using the data-plane SDK
+  - first-run initialization now retries transient data-plane endpoint errors
+    while the new instance becomes reachable
+- Verified first-run bootstrap in a fresh Hermes home:
+  - a clean environment with only `TABLESTORE_MEMORY_AK` and
+    `TABLESTORE_MEMORY_SK` now completes
+    `hermes tablestore-mem doctor` successfully on first initialization
+- Updated docs to match actual behavior:
+  - removed the practical requirement for separate `ALIBABA_CLOUD_*`
+    credentials in the default AK/SK bootstrap path
+  - clarified that the first initialization may wait noticeably longer while
+    the new endpoint becomes reachable
+  - documented semantic search visibility and eventual consistency after writes
+
 ## 1.0.1 - 2026-04-29
 
 - Changed `tenantId` precedence to config-first:
@@ -18,8 +38,6 @@ All notable changes to this project will be documented in this file.
 - Clarified installation and runtime requirements:
   - minimum supported Hermes version is `v0.10.0` (`2026-04-16`)
   - `hermes memory setup` is the recommended activation path
-  - control-plane credentials may also be required for automatic instance bootstrap
-  - the first request after bootstrap can briefly fail during endpoint DNS propagation
 - Clarified scope and defaults documentation:
   - after-install now documents config-first `tenant_id` resolution
   - README now documents exact scope resolution for `appId`, `tenantId`, `agentId`, and `runId`

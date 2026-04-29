@@ -168,17 +168,12 @@ TABLESTORE_MEMORY_SK=your_access_key_secret
 
 自动建实例的真实行为和限制：
 
-- 数据面访问仍然使用 `TABLESTORE_MEMORY_AK` 和 `TABLESTORE_MEMORY_SK`。
-- 自动创建实例走的是阿里云控制面 SDK。真实部署时，最稳妥的方式是在 Hermes
-  进程环境里同时提供可用的控制面凭证，也就是
-  `ALIBABA_CLOUD_ACCESS_KEY_ID` 和 `ALIBABA_CLOUD_ACCESS_KEY_SECRET`。
-- 新实例创建完成后，并不一定会立刻对所有后续步骤完全可见。插件现在会重试
-  控制面的 ACL 更新，但首次数据面访问仍可能因为公网 endpoint 的 DNS 尚未
-  传播完成而短暂失败。
-- 如果首次执行 `hermes tablestore-mem doctor`、`hermes memory status`
-  或 CLI 记忆命令时遇到 endpoint 解析失败或短暂连接错误，不要立刻判定为
-  配置错误；等待几秒后重试即可。等 endpoint 可达后，Hermes 会持续复用这份
-  已持久化的实例配置。
+- 控制面 bootstrap 和数据面访问都直接使用
+  `TABLESTORE_MEMORY_AK` 和 `TABLESTORE_MEMORY_SK`。
+- 新创建的实例需要一点时间才能发布可用的公网 endpoint。首次初始化时，
+  Hermes 现在会先等待 endpoint DNS 可解析，再对数据面瞬时错误做有限重试。
+- 因此，全新 Hermes home 第一次执行 `hermes tablestore-mem doctor`
+  可能会明显比平时更久，这是等待新实例变为可访问状态的正常表现。
 
 如果用户没有指定记忆库名，插件会默认使用 `hermes_mem`，并在缺失时自动创建。
 
@@ -287,6 +282,8 @@ hermes tablestore-mem doctor
 - `hermes tablestore-mem add` 通过 provider 写入一条记忆
 - `hermes tablestore-mem add` 默认异步写入；传入 `--sync` 才会等待写入完成
 - `hermes tablestore-mem search` 返回 JSON 检索结果
+- 搜索是语义检索和排序结果。写入刚完成时，尤其是异步写入场景，某个精确字面值
+  不一定会立刻出现在结果顶部；应将其视为“最终一致”而不是“严格同步可见”。
 - `hermes tablestore-mem doctor` 执行只读诊断
 - `--metadata KEY=VALUE` 可以重复使用
 - 这些 CLI 命令只有在 `tablestore-mem` 是当前激活的 memory provider 时才会注册
@@ -338,7 +335,6 @@ hermes memory status
 - endpoint 是否符合自动生成规则
   `https://{instance_name}.cn-beijing.ots.aliyuncs.com`
 - AK/SK 是否对该实例有权限
-- 如果依赖自动建实例，Hermes 进程里是否也有可用的阿里云控制面凭证
 - SDK 是否已经安装：
   - `tablestore==6.4.5`
   - `alibabacloud-tablestore20201209`
@@ -357,9 +353,9 @@ hermes memory status
   `INTERNET`/`VPC`/`CLASSIC` 网络访问 ACL 以及 `TRUST_PROXY` source ACL
 - 当默认库 `hermes_mem` 尚不存在时，自动创建记忆库
 
-另外，brand-new 实例创建后的公网 endpoint 可能还有一个很短的 DNS 传播窗口。
-在这段时间里，第一次数据面请求可能会报域名解析或短暂连接错误；等待几秒后
-重试属于正常现象。
+另外，brand-new 实例创建后的公网 endpoint 可能还有一个 DNS 传播窗口。
+Hermes 现在会在首次初始化时主动等待这段窗口，因此第一次成功命令可能会明显
+比平时更慢，这是正常现象。
 
 当前默认超时是 `30` 秒。
 

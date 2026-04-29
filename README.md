@@ -170,20 +170,14 @@ After that, Hermes reuses the same persisted instance for all later runs.
 
 Real bootstrap behavior and limits:
 
-- Data-plane access still uses `TABLESTORE_MEMORY_AK` and
-  `TABLESTORE_MEMORY_SK`.
-- Automatic instance creation uses the Alibaba Cloud control-plane SDK. In
-  real deployments, the safest setup is to also provide usable control-plane
-  credentials in the Hermes process environment through
-  `ALIBABA_CLOUD_ACCESS_KEY_ID` and `ALIBABA_CLOUD_ACCESS_KEY_SECRET`.
-- Newly created instances may not be immediately ready for every follow-up
-  step. The plugin now retries the control-plane ACL update, but the first
-  data-plane request can still fail briefly while the new public endpoint
-  finishes DNS propagation.
-- If the first `hermes tablestore-mem doctor`, `hermes memory status`, or CLI
-  memory command fails immediately after bootstrap with endpoint resolution or
-  connection errors, wait a few seconds and retry. Once the endpoint becomes
-  reachable, Hermes will keep reusing the persisted instance.
+- Both control-plane bootstrap and data-plane access use
+  `TABLESTORE_MEMORY_AK` and `TABLESTORE_MEMORY_SK`.
+- Newly created instances can take time to publish a usable public endpoint.
+  During first initialization, Hermes now waits for endpoint DNS resolution and
+  retries transient data-plane endpoint errors before surfacing a failure.
+- As a result, the first `hermes tablestore-mem doctor` on a brand-new Hermes
+  home may take noticeably longer than normal. This is expected while the new
+  instance becomes reachable.
 
 If the user does not specify a memory store name, the plugin defaults to
 `hermes_mem` and automatically creates it when missing.
@@ -297,6 +291,10 @@ Notes:
 - `hermes tablestore-mem add` writes one memory payload through the provider.
 - `hermes tablestore-mem add` is asynchronous by default; pass `--sync` to wait.
 - `hermes tablestore-mem search` returns JSON search results.
+- Search is semantic and ranked. Immediately after a write, especially an
+  asynchronous write, exact phrasing may not appear at the top of results yet.
+  Treat search visibility as eventually consistent rather than strictly
+  synchronous.
 - `hermes tablestore-mem doctor` runs read-only diagnostics.
 - `--metadata KEY=VALUE` can be repeated.
 - These CLI commands are only registered when `tablestore-mem` is the active
@@ -358,8 +356,6 @@ Check:
 - the persisted instance endpoint matches the auto-derived format
   `https://{instance_name}.cn-beijing.ots.aliyuncs.com`
 - the AK/SK pair has permission for the target instance
-- if you rely on automatic instance bootstrap, the Hermes process also has
-  usable Alibaba Cloud control-plane credentials
 - the SDK versions are installed:
   - `tablestore==6.4.5`
   - `alibabacloud-tablestore20201209`
@@ -381,9 +377,9 @@ or both of the following before writing memory data:
 - create the `hermes_mem` memory store when it does not exist yet
 
 Immediately after a brand-new instance is created, the public endpoint may
-still be propagating. In that short window, the first data-plane request can
-fail with DNS or connection errors even though the instance itself already
-exists. Retrying after a few seconds is expected behavior.
+still be propagating. Hermes now waits through that window during first
+initialization, so the first successful command can take noticeably longer than
+normal.
 
 The default timeout is `30` seconds.
 
