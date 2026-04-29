@@ -160,12 +160,30 @@ On first initialization, if `instance_name` is missing, the plugin will:
 
 - create a TableStore VCU instance through the Alibaba Cloud control-plane API
 - update the new instance network ACL to allow `INTERNET`, `VPC`, and `CLASSIC`
+  and set `NetworkSourceACL` to `TRUST_PROXY`
 - derive the data-plane endpoint as
   `https://{instance_name}.cn-beijing.ots.aliyuncs.com`
 - persist both `instance_name` and `endpoint` back into
   `tablestore_memory.json`
 
 After that, Hermes reuses the same persisted instance for all later runs.
+
+Real bootstrap behavior and limits:
+
+- Data-plane access still uses `TABLESTORE_MEMORY_AK` and
+  `TABLESTORE_MEMORY_SK`.
+- Automatic instance creation uses the Alibaba Cloud control-plane SDK. In
+  real deployments, the safest setup is to also provide usable control-plane
+  credentials in the Hermes process environment through
+  `ALIBABA_CLOUD_ACCESS_KEY_ID` and `ALIBABA_CLOUD_ACCESS_KEY_SECRET`.
+- Newly created instances may not be immediately ready for every follow-up
+  step. The plugin now retries the control-plane ACL update, but the first
+  data-plane request can still fail briefly while the new public endpoint
+  finishes DNS propagation.
+- If the first `hermes tablestore-mem doctor`, `hermes memory status`, or CLI
+  memory command fails immediately after bootstrap with endpoint resolution or
+  connection errors, wait a few seconds and retry. Once the endpoint becomes
+  reachable, Hermes will keep reusing the persisted instance.
 
 If the user does not specify a memory store name, the plugin defaults to
 `hermes_mem` and automatically creates it when missing.
@@ -291,13 +309,18 @@ The `doctor` command performs read-only diagnostics by:
 - calling `ListMemories`
 - returning structured JSON suitable for debugging support requests
 
+When `instance_name` is missing, a successful `doctor` run also confirms that
+bootstrap completed, the generated endpoint is reachable, and the new instance
+can now serve data-plane memory requests.
+
 ## Operational notes
 
 - The plugin uses `tablestore.OTSClient` memory methods directly.
 - The plugin uses Alibaba Cloud control-plane OpenAPI once for first-run
   instance bootstrap when `instance_name` is missing.
 - During first-run bootstrap, the plugin also enables public access on the new
-  instance by setting `network_type_acl` to `INTERNET`, `VPC`, and `CLASSIC`.
+  instance by setting `network_type_acl` to `INTERNET`, `VPC`, and `CLASSIC`,
+  and `NetworkSourceACL` to `TRUST_PROXY`.
 - Request signing and authentication are handled by the OTS SDK.
 - `is_available()` only checks local config presence and does not do network
   calls. It now only requires `AK/SK`; missing `instance_name` is handled by
@@ -335,6 +358,8 @@ Check:
 - the persisted instance endpoint matches the auto-derived format
   `https://{instance_name}.cn-beijing.ots.aliyuncs.com`
 - the AK/SK pair has permission for the target instance
+- if you rely on automatic instance bootstrap, the Hermes process also has
+  usable Alibaba Cloud control-plane credentials
 - the SDK versions are installed:
   - `tablestore==6.4.5`
   - `alibabacloud-tablestore20201209`
@@ -352,8 +377,13 @@ The first write may take longer than a normal request when Hermes has to do one
 or both of the following before writing memory data:
 
 - bootstrap a new TableStore instance and enable `INTERNET`/`VPC`/`CLASSIC`
-  network access on that instance
+  network access plus `TRUST_PROXY` source ACL on that instance
 - create the `hermes_mem` memory store when it does not exist yet
+
+Immediately after a brand-new instance is created, the public endpoint may
+still be propagating. In that short window, the first data-plane request can
+fail with DNS or connection errors even though the instance itself already
+exists. Retrying after a few seconds is expected behavior.
 
 The default timeout is `30` seconds.
 

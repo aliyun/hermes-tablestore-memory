@@ -158,12 +158,27 @@ TABLESTORE_MEMORY_SK=your_access_key_secret
 首次初始化时，如果 `instance_name` 缺失，插件会：
 
 - 通过阿里云控制面 API 自动创建一个 TableStore VCU 实例
-- 把新实例的 `network_type_acl` 设置为 `INTERNET`、`VPC`、`CLASSIC`
+- 把新实例的 `network_type_acl` 设置为 `INTERNET`、`VPC`、`CLASSIC`，
+  并把 `NetworkSourceACL` 设置为 `TRUST_PROXY`
 - 根据规则拼接数据面 endpoint：
   `https://{instance_name}.cn-beijing.ots.aliyuncs.com`
 - 把 `instance_name` 和 `endpoint` 自动写回 `tablestore_memory.json`
 
 之后 Hermes 会一直复用这份已经持久化的实例配置。
+
+自动建实例的真实行为和限制：
+
+- 数据面访问仍然使用 `TABLESTORE_MEMORY_AK` 和 `TABLESTORE_MEMORY_SK`。
+- 自动创建实例走的是阿里云控制面 SDK。真实部署时，最稳妥的方式是在 Hermes
+  进程环境里同时提供可用的控制面凭证，也就是
+  `ALIBABA_CLOUD_ACCESS_KEY_ID` 和 `ALIBABA_CLOUD_ACCESS_KEY_SECRET`。
+- 新实例创建完成后，并不一定会立刻对所有后续步骤完全可见。插件现在会重试
+  控制面的 ACL 更新，但首次数据面访问仍可能因为公网 endpoint 的 DNS 尚未
+  传播完成而短暂失败。
+- 如果首次执行 `hermes tablestore-mem doctor`、`hermes memory status`
+  或 CLI 记忆命令时遇到 endpoint 解析失败或短暂连接错误，不要立刻判定为
+  配置错误；等待几秒后重试即可。等 endpoint 可达后，Hermes 会持续复用这份
+  已持久化的实例配置。
 
 如果用户没有指定记忆库名，插件会默认使用 `hermes_mem`，并在缺失时自动创建。
 
@@ -283,11 +298,15 @@ hermes tablestore-mem doctor
 - 调用 `ListMemories`
 - 返回结构化 JSON，方便用户直接贴出来排障
 
+当 `instance_name` 缺失时，一次成功的 `doctor` 也意味着：自动建实例已经
+完成、生成的 endpoint 已可访问、且新实例已经能够承载数据面的记忆请求。
+
 ## 运行说明
 
 - 插件直接调用 `tablestore.OTSClient` 的 memory 方法
 - 当 `instance_name` 缺失时，插件会先通过阿里云控制面 OpenAPI 自动创建实例
-- 首次自动创建实例后，插件还会立即开放公网/VPC/经典网络访问 ACL
+- 首次自动创建实例后，插件还会立即开放公网/VPC/经典网络访问 ACL，并设置
+  `NetworkSourceACL=TRUST_PROXY`
 - OTS SDK 负责请求签名和鉴权
 - `is_available()` 现在只要求本地存在 `AK/SK`；缺失实例时会在初始化阶段自动自举
 - `sync_turn()` 使用后台线程，避免阻塞主代理循环
@@ -319,6 +338,7 @@ hermes memory status
 - endpoint 是否符合自动生成规则
   `https://{instance_name}.cn-beijing.ots.aliyuncs.com`
 - AK/SK 是否对该实例有权限
+- 如果依赖自动建实例，Hermes 进程里是否也有可用的阿里云控制面凭证
 - SDK 是否已经安装：
   - `tablestore==6.4.5`
   - `alibabacloud-tablestore20201209`
@@ -334,8 +354,12 @@ hermes memory status
 第一次写入可能会比普通请求更慢，因为插件可能需要先完成以下一个或两个步骤：
 
 - 自动创建新的 TableStore 实例，并为该实例开启
-  `INTERNET`/`VPC`/`CLASSIC` 网络访问 ACL
+  `INTERNET`/`VPC`/`CLASSIC` 网络访问 ACL 以及 `TRUST_PROXY` source ACL
 - 当默认库 `hermes_mem` 尚不存在时，自动创建记忆库
+
+另外，brand-new 实例创建后的公网 endpoint 可能还有一个很短的 DNS 传播窗口。
+在这段时间里，第一次数据面请求可能会报域名解析或短暂连接错误；等待几秒后
+重试属于正常现象。
 
 当前默认超时是 `30` 秒。
 

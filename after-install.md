@@ -54,9 +54,22 @@ TABLESTORE_MEMORY_SK=your_access_key_secret
 
 If `instance_name` is missing, the plugin automatically creates a VCU instance
 on first initialization, enables `INTERNET`/`VPC`/`CLASSIC` network access on
-that new instance, derives the endpoint as
+that new instance, sets `NetworkSourceACL=TRUST_PROXY`, derives the endpoint as
 `https://{instance_name}.cn-beijing.ots.aliyuncs.com`, and persists both
 fields for reuse.
+
+For automatic instance bootstrap, `TABLESTORE_MEMORY_AK` and
+`TABLESTORE_MEMORY_SK` are not always sufficient by themselves. The bootstrap
+path uses the Alibaba Cloud control-plane SDK, so the Hermes process should
+also have usable Alibaba Cloud account credentials in its environment. In
+practice, setting `ALIBABA_CLOUD_ACCESS_KEY_ID` and
+`ALIBABA_CLOUD_ACCESS_KEY_SECRET` to the same account credentials is the
+safest setup.
+
+A newly created instance may also need a short propagation window before the
+public endpoint is reachable. If the first `doctor`, `status`, or CLI memory
+command fails immediately after bootstrap with DNS or connection errors, wait a
+few seconds and retry.
 
 If `memory_store_name` is omitted, the plugin uses `hermes_mem` and creates it
 automatically when missing.

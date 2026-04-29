@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import threading
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -317,7 +318,36 @@ class _TableStoreControlClient:
             return response.to_map()
         raise RuntimeError("CreateVCUInstance returned an unexpected response payload.")
 
-    def update_instance_network_acl(self, instance_name: str, acl: List[str]) -> dict:
+    def get_instance(self, instance_name: str) -> dict:
+        request_cls = tablestore_20201209_models.GetInstanceRequest if tablestore_20201209_models else None
+        runtime_cls = util_models.RuntimeOptions if util_models else None
+        if request_cls is None or runtime_cls is None:
+            from alibabacloud_tablestore20201209 import models as tablestore_20201209_models_local
+            from alibabacloud_tea_util import models as util_models_local
+
+            request_cls = tablestore_20201209_models_local.GetInstanceRequest
+            runtime_cls = util_models_local.RuntimeOptions
+
+        request = request_cls(instance_name=instance_name)
+        response = self._client.get_instance_with_options(request, {}, runtime_cls())
+        if isinstance(response, dict):
+            return response
+        body = getattr(response, "body", None)
+        if body is not None:
+            if hasattr(body, "to_map"):
+                return body.to_map()
+            if isinstance(body, dict):
+                return body
+        if hasattr(response, "to_map"):
+            return response.to_map()
+        raise RuntimeError("GetInstance returned an unexpected response payload.")
+
+    def update_instance_network_acl(
+        self,
+        instance_name: str,
+        acl: List[str],
+        source_acl: Optional[List[str]] = None,
+    ) -> dict:
         request_cls = tablestore_20201209_models.UpdateInstanceRequest if tablestore_20201209_models else None
         runtime_cls = util_models.RuntimeOptions if util_models else None
         if request_cls is None or runtime_cls is None:
@@ -329,6 +359,7 @@ class _TableStoreControlClient:
 
         request = request_cls(
             instance_name=instance_name,
+            network_source_acl=source_acl or ["TRUST_PROXY"],
             network_type_acl=acl,
         )
         response = self._client.update_instance_with_options(request, {}, runtime_cls())
@@ -503,21 +534,35 @@ class TableStoreMemoryProvider(MemoryProvider):
         instance_name = _clean_str(response.get("InstanceName"))
         if not instance_name:
             raise RuntimeError("CreateVCUInstance succeeded but did not return InstanceName.")
-        try:
-            control_client.update_instance_network_acl(
-                instance_name,
-                ["INTERNET", "VPC", "CLASSIC"],
-            )
-        except Exception as exc:
-            message = getattr(exc, "message", str(exc))
-            recommend = ""
-            data = getattr(exc, "data", None)
-            if isinstance(data, dict):
-                recommend = _clean_str(data.get("Recommend"))
-            detail = f"Failed to enable public network access for TableStore instance {instance_name}: {message}"
-            if recommend:
-                detail += f" ({recommend})"
-            raise RuntimeError(detail) from exc
+        last_exc: Optional[Exception] = None
+        for attempt in range(6):
+            try:
+                control_client.get_instance(instance_name)
+                control_client.update_instance_network_acl(
+                    instance_name,
+                    ["INTERNET", "VPC", "CLASSIC"],
+                    ["TRUST_PROXY"],
+                )
+                last_exc = None
+                break
+            except Exception as exc:
+                last_exc = exc
+                message = getattr(exc, "message", str(exc))
+                if attempt < 5 and _is_not_found_error(exc):
+                    time.sleep(3.0)
+                    continue
+                recommend = ""
+                data = getattr(exc, "data", None)
+                if isinstance(data, dict):
+                    recommend = _clean_str(data.get("Recommend"))
+                detail = f"Failed to enable public network access for TableStore instance {instance_name}: {message}"
+                if recommend:
+                    detail += f" ({recommend})"
+                raise RuntimeError(detail) from exc
+        if last_exc is not None:
+            raise RuntimeError(
+                f"Failed to enable public network access for TableStore instance {instance_name}: {last_exc}"
+            ) from last_exc
         return {
             "instance_name": instance_name,
             "endpoint": _build_instance_endpoint(instance_name),
