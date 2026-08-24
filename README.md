@@ -152,7 +152,8 @@ Only these two secret fields belong in `.env`.
   "tenant_id": "",
   "enable_rerank": true,
   "auto_create_store": true,
-  "timeout": 30.0
+  "timeout": 30.0,
+  "host_label": ""
 }
 ```
 
@@ -193,6 +194,7 @@ Current built-in defaults:
 - `enable_rerank`: `true`
 - `auto_create_store`: `true`
 - `timeout`: `30`
+- `host_label`: empty string, which leaves scope and metadata unchanged
 
 ## How scope works
 
@@ -213,6 +215,7 @@ Current field resolution:
   Default: `__default__`.
 - `agentId`
   Source: Hermes session identity, currently `agent_identity`.
+  Suffixed with `@<host_label>` when `host_label` is configured.
   Default: `hermes`.
 - `runId`
   Source priority:
@@ -221,9 +224,9 @@ Current field resolution:
   3. current `session_id`
   Default: `__default__` only if all of the above are empty.
 
-This means only `appId` and `tenantId` are user-facing configuration inputs.
-`agentId` and `runId` are intentionally session-derived so users do not need
-to manage them manually.
+This means `appId`, `tenantId`, and the optional `host_label` are the
+user-facing configuration inputs. `agentId` and `runId` are otherwise
+session-derived so users do not need to manage them manually.
 
 Configuration source summary:
 
@@ -239,6 +242,36 @@ Write scope and search scope are intentionally different:
 
 This lets Hermes search across all agents and sessions for the same tenant
 while still writing memories with precise session attribution.
+
+### Telling machines apart
+
+`appId` and `tenantId` have to match across machines for shared memory to work,
+and `runId` is session-derived, so by default nothing on a memory records which
+machine wrote it: several machines running the same Hermes profile all resolve to
+the same `agentId`.
+
+Set `host_label` on each machine to make the origin explicit:
+
+```json
+{
+  "host_label": "auto"
+}
+```
+
+- `auto` resolves to the OS hostname; any other non-empty value is used as-is
+- characters outside `A-Za-z0-9._-` are replaced with `-`, the result is
+  truncated to 64 characters, and a label that sanitizes to nothing disables the
+  feature instead of writing an unusable scope segment
+- the effect shows up in two places: `scope.agentId` becomes
+  `default@my-laptop`, and `metadata.host` becomes `my-laptop`
+
+Because retrieval wildcards `agentId`, machines still read each other's
+memories, and anything written before `host_label` was enabled stays
+retrievable. To narrow a search to a single machine, filter on metadata:
+
+```json
+{"metadata": {"host": "my-laptop"}}
+```
 
 ## Verify the installation
 

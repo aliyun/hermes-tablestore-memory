@@ -112,6 +112,28 @@ def _scope_piece(value: Any, default: str = "__default__") -> str:
     return text if text else default
 
 
+_HOST_LABEL_AUTO = "auto"
+_HOST_LABEL_MAX_LEN = 64
+
+
+def _resolve_host_label(value: Any) -> str:
+    """Resolve the optional host label that attributes memories to a machine.
+
+    Empty disables the feature and keeps the scope exactly as before; ``auto``
+    resolves to the OS hostname. The result is restricted to characters that are
+    safe to carry inside a scope segment.
+    """
+    text = _clean_str(value)
+    if text.lower() == _HOST_LABEL_AUTO:
+        text = _clean_str(socket.gethostname())
+    if not text:
+        return ""
+    safe = "".join(
+        ch if (ch.isascii() and ch.isalnum()) or ch in "._-" else "-" for ch in text
+    )
+    return safe[:_HOST_LABEL_MAX_LEN].strip("-.")
+
+
 def _build_instance_endpoint(instance_name: str, region: str = _DEFAULT_REGION) -> str:
     return f"https://{instance_name}.{region}.ots.aliyuncs.com"
 
@@ -132,6 +154,7 @@ def _load_config() -> dict:
         "enable_rerank": True,
         "auto_create_store": True,
         "timeout": _DEFAULT_TIMEOUT,
+        "host_label": "",
     }
 
     config_path = get_hermes_home() / "tablestore_memory.json"
@@ -530,6 +553,7 @@ class TableStoreMemoryProvider(MemoryProvider):
         self._tenant_id = "__default__"
         self._agent_id = "hermes"
         self._run_id = "__default__"
+        self._host_label = ""
         self._memory_store_name = ""
         self._enable_rerank = True
         self._prefetch_result = ""
@@ -641,7 +665,11 @@ class TableStoreMemoryProvider(MemoryProvider):
         self._platform = _clean_str(kwargs.get("platform"), "cli")
         self._app_id = _scope_piece(self._config.get("app_id"), "hermes")
         self._tenant_id = _scope_piece(self._config.get("tenant_id") or kwargs.get("user_id"))
-        self._agent_id = _scope_piece(kwargs.get("agent_identity"), "hermes")
+        self._host_label = _resolve_host_label(self._config.get("host_label"))
+        agent_identity = _scope_piece(kwargs.get("agent_identity"), "hermes")
+        self._agent_id = (
+            f"{agent_identity}@{self._host_label}" if self._host_label else agent_identity
+        )
         self._run_id = _scope_piece(
             kwargs.get("gateway_session_key")
             or kwargs.get("session_title")
@@ -957,6 +985,8 @@ class TableStoreMemoryProvider(MemoryProvider):
             "platform": self._platform,
             "session_id": self._session_id,
         }
+        if self._host_label:
+            metadata["host"] = self._host_label
         for key, value in extra.items():
             text = _clean_str(value)
             if text:
@@ -994,13 +1024,15 @@ class TableStoreMemoryProvider(MemoryProvider):
 
     def _format_hit(self, hit: Dict[str, Any]) -> Dict[str, Any]:
         unit = hit.get("unit", {}) or {}
+        formatted = self._format_memory(unit)
         return {
             "id": unit.get("id", ""),
             "text": unit.get("text", ""),
             "unit_type": unit.get("unit_type", ""),
             "score": hit.get("score"),
             "source": hit.get("source", ""),
-            "scope": self._format_memory(unit).get("scope", {}),
+            "scope": formatted.get("scope", {}),
+            "metadata": formatted.get("metadata", {}),
         }
 
 

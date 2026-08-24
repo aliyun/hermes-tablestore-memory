@@ -151,7 +151,8 @@ TABLESTORE_MEMORY_SK=your_access_key_secret
   "tenant_id": "",
   "enable_rerank": true,
   "auto_create_store": true,
-  "timeout": 30.0
+  "timeout": 30.0,
+  "host_label": ""
 }
 ```
 
@@ -188,6 +189,7 @@ TABLESTORE_MEMORY_SK=your_access_key_secret
 - `enable_rerank`: `true`
 - `auto_create_store`: `true`
 - `timeout`: `30`
+- `host_label`: 空字符串，即不改变 scope 与 metadata
 
 ## Scope 设计
 
@@ -208,6 +210,7 @@ appId / tenantId / agentId / runId
   默认值：`__default__`
 - `agentId`
   来源：Hermes 当前会话身份，当前实现里主要是 `agent_identity`
+  配置 `host_label` 后会追加 `@<host_label>` 后缀
   默认值：`hermes`
 - `runId`
   来源优先级：
@@ -216,8 +219,8 @@ appId / tenantId / agentId / runId
   3. 当前 `session_id`
   默认值：仅在以上都为空时回退到 `__default__`
 
-也就是说，真正需要用户配置的主要是 `appId` 和 `tenantId`；`agentId` 与
-`runId` 默认由 Hermes 会话上下文提供，不建议用户手工管理。
+也就是说，需要用户配置的是 `appId`、`tenantId` 以及可选的 `host_label`；
+`agentId` 与 `runId` 的其余部分由 Hermes 会话上下文提供，不建议手工管理。
 
 配置来源总结：
 
@@ -235,6 +238,33 @@ appId / tenantId / agentId / runId
 
 - 记忆写入时保留精确归属
 - 检索时按租户维度跨 agent、跨会话召回
+
+### 区分不同机器
+
+多机共享要求 `appId` 与 `tenantId` 完全一致，而 `runId` 由会话派生，因此默认情况下
+记忆里并没有任何字段记录它是哪台机器写入的——多台机器只要跑同一个 Hermes profile，
+解析出的 `agentId` 就完全相同。
+
+在每台机器上配置 `host_label` 即可显式标记来源：
+
+```json
+{
+  "host_label": "auto"
+}
+```
+
+- `auto` 解析为操作系统主机名；填其他非空值时按原样使用
+- `A-Za-z0-9._-` 之外的字符会被替换为 `-`，结果截断到 64 字符；若清洗后为空，
+  则视为未启用，而不会写入非法的 scope 片段
+- 生效后有两处可见：`scope.agentId` 变为 `default@my-laptop`，
+  `metadata.host` 变为 `my-laptop`
+
+由于检索时 `agentId` 使用通配符，各机器之间仍能互相读到记忆，启用之前写入的历史
+记忆也照常可被召回。如需只看某一台机器，按 metadata 过滤：
+
+```json
+{"metadata": {"host": "my-laptop"}}
+```
 
 ## 验证安装
 
