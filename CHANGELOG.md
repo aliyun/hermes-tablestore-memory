@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- Added an optional `host_label` config field that attributes memories to a
+  specific machine:
+  - accepts a literal label, or `auto` to resolve the OS hostname
+  - when set, the write scope becomes
+    `agentId = <agent_identity>@<host_label>`, and every memory written by this
+    installation carries a `host` metadata key
+  - when unset (the default) the resolved scope and metadata are unchanged, so
+    existing installations keep their current behavior
+  - retrieval keeps using `agentId=*` / `runId=*`, so memories written by
+    different machines under the same tenant stay mutually visible
+- `tablestore_search` results now include the `metadata` field, matching what
+  `tablestore_profile` already returned for the same memory units
+
 ## 1.0.2 - 2026-04-29
 
 - Fixed clean-environment automatic bootstrap:

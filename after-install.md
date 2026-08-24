@@ -42,7 +42,8 @@ TABLESTORE_MEMORY_SK=your_access_key_secret
   "tenant_id": "",
   "enable_rerank": true,
   "auto_create_store": true,
-  "timeout": 30.0
+  "timeout": 30.0,
+  "host_label": ""
 }
 ```
 
